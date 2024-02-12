@@ -81,7 +81,7 @@ my_context_delete(struct my_context *ctx)
 static int
 file_quicksort(void *context)
 {		
-	struct timespec coro_start, sort_start;
+	struct timespec coro_start, after_initialization, presort_start, sort_start, coro_end;
 	clock_gettime(CLOCK_MONOTONIC, &coro_start);
 
 	struct coro *this = coro_this();
@@ -92,9 +92,15 @@ file_quicksort(void *context)
 	struct metafile* metafile = ctx->metafile;
 	struct metaarray** metaarrays = ctx->metaarrays;
 	
+	clock_gettime(CLOCK_MONOTONIC, &after_initialization);
+	total_cumulative_time += (float)(((after_initialization.tv_sec - coro_start.tv_sec) * 1000000000 + (after_initialization.tv_nsec - coro_start.tv_nsec)) / 1000) / 1000000;
+
+
 	printf("Started coroutine '%s'\n", name);
 
 	while (metafile->current_file < metafile->count) {
+		clock_gettime(CLOCK_MONOTONIC, &presort_start);
+
 		int file_index = metafile->current_file;
 		char* filename = metafile->filenames[file_index];
 
@@ -111,8 +117,13 @@ file_quicksort(void *context)
 		fclose(file);
 
 		clock_gettime(CLOCK_MONOTONIC, &sort_start);
+		total_cumulative_time += (float)(((sort_start.tv_sec - presort_start.tv_sec) * 1000000000 + (sort_start.tv_nsec - presort_start.tv_nsec)) / 1000) / 1000000;
+		
 		quicksort(metaarrays[file_index]->number_array, 0, metaarrays[file_index]->size - 1, latency , &sort_start, &total_cumulative_time);
 	}
+
+	clock_gettime(CLOCK_MONOTONIC, &coro_end);
+	total_cumulative_time += (float)(((coro_end.tv_sec - sort_start.tv_sec) * 1000000000 + (coro_end.tv_nsec - sort_start.tv_nsec)) / 1000) / 1000000;
 
 	printf("%s: ended after %f s\n", name, total_cumulative_time);
 	printf("%s: switch count %lld\n", ctx->name,
@@ -154,6 +165,10 @@ main(int argc, char **argv)
 			coro_delete(c);
 		}
 	}
+
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	float time_res_tmp = (float)(((end.tv_sec - start.tv_sec) * 1000000000 + (end.tv_nsec - start.tv_nsec)) / 1000) / 1000000;
+	printf("Pre merge time %f s\n", time_res_tmp);
 
     FILE *output_file = fopen(output_filename, "w");
     if (output_file == NULL) {
