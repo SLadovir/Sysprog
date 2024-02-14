@@ -86,19 +86,20 @@ file_quicksort(void *context)
 
 	struct coro *this = coro_this();
 	struct my_context *ctx = context;
-	float total_cumulative_time;
+	float total_cumulative_time = 0.0;
 	char* name = ctx->name;
 	float latency = ctx->latency;
 	struct metafile* metafile = ctx->metafile;
 	struct metaarray** metaarrays = ctx->metaarrays;
+	int sorted_files = 0;
+
+	printf("Started coroutine '%s'\n", name);
 	
 	clock_gettime(CLOCK_MONOTONIC, &after_initialization);
 	total_cumulative_time += (float)(((after_initialization.tv_sec - coro_start.tv_sec) * 1000000000 + (after_initialization.tv_nsec - coro_start.tv_nsec)) / 1000) / 1000000;
 
-
-	printf("Started coroutine '%s'\n", name);
-
 	while (metafile->current_file < metafile->count) {
+		++sorted_files;
 		clock_gettime(CLOCK_MONOTONIC, &presort_start);
 
 		int file_index = metafile->current_file;
@@ -123,7 +124,11 @@ file_quicksort(void *context)
 	}
 
 	clock_gettime(CLOCK_MONOTONIC, &coro_end);
-	total_cumulative_time += (float)(((coro_end.tv_sec - sort_start.tv_sec) * 1000000000 + (coro_end.tv_nsec - sort_start.tv_nsec)) / 1000) / 1000000;
+	if (sorted_files > 0){
+		total_cumulative_time += (float)(((coro_end.tv_sec - sort_start.tv_sec) * 1000000000 + (coro_end.tv_nsec - sort_start.tv_nsec)) / 1000) / 1000000;
+	} else {
+		total_cumulative_time += (float)(((coro_end.tv_sec - after_initialization.tv_sec) * 1000000000 + (coro_end.tv_nsec - after_initialization.tv_nsec)) / 1000) / 1000000;
+	}
 
 	printf("%s: ended after %f s\n", name, total_cumulative_time);
 	printf("%s: switch count %lld\n", ctx->name,
