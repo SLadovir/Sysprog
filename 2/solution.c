@@ -1,49 +1,146 @@
-#include "parser.h"
-
-#include <assert.h>
-#include <stdio.h>
-#include <unistd.h>
-
-static void
-execute_command_line(const struct command_line *line)
-{
-	/* REPLACE THIS CODE WITH ACTUAL COMMAND EXECUTION */
-
-	assert(line != NULL);
-	printf("================================\n");
-	printf("Command line:\n");
-	printf("Is background: %d\n", (int)line->is_background);
-	printf("Output: ");
-	if (line->out_type == OUTPUT_TYPE_STDOUT) {
-		printf("stdout\n");
-	} else if (line->out_type == OUTPUT_TYPE_FILE_NEW) {
-		printf("new file - \"%s\"\n", line->out_file);
-	} else if (line->out_type == OUTPUT_TYPE_FILE_APPEND) {
-		printf("append file - \"%s\"\n", line->out_file);
-	} else {
-		assert(false);
-	}
-	printf("Expressions:\n");
-	const struct expr *e = line->head;
-	while (e != NULL) {
-		if (e->type == EXPR_TYPE_COMMAND) {
-			printf("\tCommand: %s", e->cmd.exe);
-			for (uint32_t i = 0; i < e->cmd.arg_count; ++i)
-				printf(" %s", e->cmd.args[i]);
-			printf("\n");
-		} else if (e->type == EXPR_TYPE_PIPE) {
-			printf("\tPIPE\n");
-		} else if (e->type == EXPR_TYPE_AND) {
-			printf("\tAND\n");
-		} else if (e->type == EXPR_TYPE_OR) {
-			printf("\tOR\n");
-		} else {
-			assert(false);
-		}
-		e = e->next;
-	}
-}
-
+#include <stdio.h> 
+#include <stdlib.h> 
+#include <unistd.h> 
+#include <string.h> 
+#include <sys/types.h> 
+#include <sys/wait.h> 
+#include <fcntl.h> 
+ 
+#define MAX_COMMANDS 10 
+#define MAX_TOKENS 10 
+#define MAX_TOKEN_LENGTH 256 
+#define MAX_COMMAND_LENGTH 1024 
+ 
+void execute_command_line(char *tokens[MAX_TOKENS], int num_tokens) { 
+    pid_t pid; 
+    int status; 
+ 
+    pid = fork(); 
+    if (pid < 0) { 
+        perror("fork"); 
+        exit(EXIT_FAILURE); 
+    } else if (pid == 0) { // child process 
+        // Execute the command 
+        execvp(tokens[0], tokens); 
+        // If execvp returns, an error occurred 
+        perror("execvp"); 
+        exit(EXIT_FAILURE); 
+    } else { // parent process 
+        // Wait for child process to finish 
+        waitpid(pid, &status, 0); 
+    } 
+} 
+ 
+void execute_pipeline(char *commands[MAX_COMMANDS], int num_commands) { 
+    int fds[num_commands - 1][2]; 
+ 
+    // Create pipes 
+    for (int i = 0; i < num_commands - 1; i++) { 
+        if (pipe(fds[i]) == -1) { 
+            perror("pipe"); 
+            exit(EXIT_FAILURE); 
+        } 
+    } 
+ 
+    for (int i = 0; i < num_commands; i++) { 
+        char *tokens[MAX_TOKENS]; 
+        int num_tokens = 0; 
+        char *token = strtok(commands[i], " "); 
+        while (token != NULL) { 
+            tokens[num_tokens++] = token; 
+            token = strtok(NULL, " "); 
+        } 
+        tokens[num_tokens] = NULL; // Null-terminate the array 
+ 
+        pid_t pid = fork(); 
+        if (pid < 0) { 
+            perror("fork"); 
+            exit(EXIT_FAILURE); 
+        } else if (pid == 0) { // child process 
+            // Connect pipes 
+            if (i != 0) { 
+                if (dup2(fds[i - 1][0], STDIN_FILENO) == -1) { 
+                    perror("dup2"); 
+                    exit(EXIT_FAILURE); 
+                } 
+            } 
+            if (i != num_commands - 1) { 
+                if (dup2(fds[i][1], STDOUT_FILENO) == -1) { 
+                    perror("dup2"); 
+                    exit(EXIT_FAILURE); 
+                } 
+            } 
+ 
+            // Close all pipe file descriptors 
+            for (int j = 0; j < num_commands - 1; j++) { 
+                close(fds[j][0]); 
+                close(fds[j][1]); 
+            } 
+ 
+            // Execute the command 
+            execvp(tokens[0], tokens); 
+            // If execvp returns, an error occurred 
+            perror("execvp"); 
+            exit(EXIT_FAILURE); 
+        } else { // parent process 
+            // Close unused pipe file descriptors 
+            if (i != 0) { 
+                close(fds[i - 1][0]); 
+                close(fds[i - 1][1]); 
+            } 
+        } 
+    } 
+ 
+    // Close all pipe file descriptors 
+    for (int i = 0; i < num_commands - 1; i++) { 
+        close(fds[i][0]); 
+        close(fds[i][1]); 
+    } 
+ 
+    // Wait for all child processes to finish 
+    for (int i = 0; i < num_commands; i++) { 
+        wait(NULL); 
+    } 
+} 
+ 
+void execute_redirect(char *tokens[MAX_TOKENS], int num_tokens, char *filename, int append) { 
+    int fd; 
+    mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // rw-r--r-- 
+    if (append) { 
+        fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, mode); 
+    } else { 
+        fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, mode); 
+    } 
+    if (fd == -1) { 
+        perror("open"); 
+        return; 
+    } 
+ 
+    pid_t pid = fork(); 
+    if (pid < 0) { 
+        perror("fork"); 
+        close(fd); 
+        return; 
+    } else if (pid == 0) { // child process 
+        // Redirect output to the file 
+        if (dup2(fd, STDOUT_FILENO) == -1) { 
+            perror("dup2"); 
+            close(fd); 
+            exit(EXIT_FAILURE); 
+        } 
+        close(fd); 
+ 
+        // Execute the command 
+        execvp(tokens[0], tokens); 
+        // If execvp returns, an error occurred 
+        perror("execvp"); 
+        exit(EXIT_FAILURE); 
+    } else { // parent process 
+        close(fd); 
+        // Wait for child process to finish 
+        waitpid(pid, NULL, 0); 
+    } 
+} 
 int
 main(void)
 {
