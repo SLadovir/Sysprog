@@ -137,7 +137,8 @@ ufs_close(int fd);
 int
 ufs_delete(const char *filename);
 
-#ifdef NEED_RESIZE
+//#ifdef NEED_RESIZE
+#define NEED_RESIZE
 
 /**
  * Resize a file opened by the file descriptor @a fd. If current
